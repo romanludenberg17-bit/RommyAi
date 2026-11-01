@@ -2,6 +2,7 @@ package com.rommy.ai.voice
 
 import android.content.Context
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Locale
 import kotlin.coroutines.resume
@@ -22,7 +23,7 @@ class AndroidTtsEngine(context: Context) : SpeechEngine, TextToSpeech.OnInitList
         tts.setPitch(style.pitch)
         suspendCancellableCoroutine { continuation ->
             val utteranceId = "rommy-${System.nanoTime()}"
-            val listener = object : TextToSpeech.OnUtteranceProgressListener() {
+            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) = Unit
                 override fun onDone(id: String?) {
                     if (id == utteranceId && continuation.isActive) continuation.resume(Unit)
@@ -30,8 +31,7 @@ class AndroidTtsEngine(context: Context) : SpeechEngine, TextToSpeech.OnInitList
                 override fun onError(id: String?) {
                     if (id == utteranceId && continuation.isActive) continuation.resume(Unit)
                 }
-            }
-            tts.setOnUtteranceProgressListener(listener)
+            })
             tts.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
             continuation.invokeOnCancellation { tts.stop() }
         }
