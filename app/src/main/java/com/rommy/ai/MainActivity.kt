@@ -63,6 +63,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.rommy.ai.ai.AssistantSettings
+import com.rommy.ai.ai.ChatHistoryStore
+import com.rommy.ai.ai.StoredChatMessage
 import com.rommy.ai.ai.GeminiClient
 import com.rommy.ai.apps.AppLauncher
 import com.rommy.ai.commands.CommandRouter
@@ -94,10 +96,12 @@ class MainActivity : ComponentActivity() {
         recognizer = SpeechRecognizerController(this, onResult = ::handleRecognizedCommand)
         val assistantSettings = AssistantSettings(this)
         val geminiClient = GeminiClient()
+        val chatHistory = ChatHistoryStore(this)
         setContent {
             RommyTheme {
                 RommyAssistant(
                     voice = voice,
+                    chatHistory = chatHistory,
                     onListen = ::startListening,
                     onAsk = { prompt, history -> askAssistant(prompt, history, assistantSettings, geminiClient) },
                     onSaveApiKey = assistantSettings::saveGeminiApiKey,
@@ -174,12 +178,13 @@ private data class ChatMessage(val text: String, val fromUser: Boolean)
 @Composable
 private fun RommyAssistant(
     voice: VoiceCoordinator,
+    chatHistory: ChatHistoryStore,
     onListen: () -> Unit,
     onAsk: suspend (String, List<Pair<String, String>>) -> String,
     onSaveApiKey: (String) -> Unit,
     apiKeyConfigured: Boolean
 ) {
-    val messages = remember { mutableStateListOf<ChatMessage>() }
+    val messages = remember { mutableStateListOf<ChatMessage>().apply { chatHistory.activeMessages().forEach { add(ChatMessage(it.text, it.role == "user")) } } }
     var prompt by remember { mutableStateOf("") }
     var drawerOpen by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
@@ -188,10 +193,36 @@ private fun RommyAssistant(
     var showSettings by remember { mutableStateOf(false) }
     var apiKeyInput by remember { mutableStateOf("") }
     var hasApiKey by remember { mutableStateOf(apiKeyConfigured) }
+    var showHistory by remember { mutableStateOf(false) }
+    var conversations by remember { mutableStateOf(chatHistory.conversations()) }
     val drawerState = androidx.compose.material3.rememberDrawerState(
         if (drawerOpen) androidx.compose.material3.DrawerValue.Open else androidx.compose.material3.DrawerValue.Closed
     )
     val scope = rememberCoroutineScope()
+
+    if (showHistory) {
+        AlertDialog(
+            onDismissRequest = { showHistory = false },
+            title = { Text("недавние чаты") },
+            text = {
+                if (conversations.isEmpty()) Text("пока нет сохранённых диалогов.", color = Muted)
+                else Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    conversations.forEach { conversation ->
+                        TextButton(onClick = {
+                            chatHistory.activate(conversation.id)
+                            messages.clear()
+                            conversation.messages.forEach { messages.add(ChatMessage(it.text, it.role == "user")) }
+                            showCapabilities = messages.isEmpty()
+                            showHistory = false
+                        }) {
+                            Text(conversation.title, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showHistory = false }) { Text("закрыть") } }
+        )
+    }
 
     if (showSettings) {
         AlertDialog(
@@ -239,6 +270,8 @@ private fun RommyAssistant(
                         selected = false,
                         onClick = {
                             messages.clear()
+                            chatHistory.createNewChat()
+                            conversations = chatHistory.conversations()
                             showCapabilities = true
                             scope.launch { drawerState.close() }
                         }
@@ -246,7 +279,11 @@ private fun RommyAssistant(
                     NavigationDrawerItem(
                         label = { Text("◷   недавние чаты") },
                         selected = false,
-                        onClick = { scope.launch { drawerState.close() } }
+                        onClick = {
+                            conversations = chatHistory.conversations()
+                            showHistory = true
+                            scope.launch { drawerState.close() }
+                        }
                     )
                     Spacer(Modifier.weight(1f))
                     Card(colors = CardDefaults.cardColors(containerColor = PanelRaised)) {
@@ -292,6 +329,8 @@ private fun RommyAssistant(
                     actions = {
                         IconButton(onClick = {
                             messages.clear()
+                            chatHistory.createNewChat()
+                            conversations = chatHistory.conversations()
                             showCapabilities = true
                         }) { Text("＋", fontSize = 25.sp, color = Lavender) }
                         Spacer(Modifier.width(4.dp))
@@ -337,6 +376,8 @@ private fun RommyAssistant(
                                 val value = prompt.trim()
                                 if (value.isNotEmpty()) {
                                     messages.add(ChatMessage(value, true))
+                                    chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                                    conversations = chatHistory.conversations()
                                     prompt = ""
                                     val history = messages.dropLast(1).map { (if (it.fromUser) "user" else "assistant") to it.text }
                                     isThinking = true
@@ -344,6 +385,8 @@ private fun RommyAssistant(
                                     scope.launch {
                                         val answer = onAsk(value, history)
                                         messages.add(ChatMessage(answer, false))
+                                        chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                                        conversations = chatHistory.conversations()
                                         isThinking = false
                                     }
                                 }
