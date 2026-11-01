@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -96,6 +97,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var geminiClient: GeminiClient
     private lateinit var chatHistory: ChatHistoryStore
     private val voicePrompts = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    private val listeningState = mutableStateOf(ListeningState.IDLE)
 
     private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) recognizer.start()
@@ -104,7 +106,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         voice = VoiceCoordinator(this)
-        recognizer = SpeechRecognizerController(this, onResult = ::handleRecognizedCommand)
+        recognizer = SpeechRecognizerController(
+            this,
+            onResult = ::handleRecognizedCommand,
+            onState = { listeningState.value = it }
+        )
         assistantSettings = AssistantSettings(this)
         geminiClient = GeminiClient()
         chatHistory = ChatHistoryStore(this)
@@ -114,7 +120,9 @@ class MainActivity : ComponentActivity() {
                     voice = voice,
                     chatHistory = chatHistory,
                     voicePrompts = voicePrompts,
+                    listeningState = listeningState,
                     onListen = ::startListening,
+                    onStopListening = ::stopListening,
                     onAsk = { prompt, history -> askAssistant(prompt, history, assistantSettings, geminiClient) },
                     onSaveApiKey = assistantSettings::saveGeminiApiKey,
                     apiKeyConfigured = assistantSettings.getGeminiApiKey() != null
@@ -127,6 +135,10 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             audioPermission.launch(Manifest.permission.RECORD_AUDIO)
         } else recognizer.start()
+    }
+
+    private fun stopListening() {
+        recognizer.stop()
     }
 
     private fun handleRecognizedCommand(text: String) {
@@ -185,7 +197,9 @@ private fun RommyAssistant(
     voice: VoiceCoordinator,
     chatHistory: ChatHistoryStore,
     voicePrompts: SharedFlow<String>,
+    listeningState: State<ListeningState>,
     onListen: () -> Unit,
+    onStopListening: () -> Unit,
     onAsk: suspend (String, List<Pair<String, String>>) -> String,
     onSaveApiKey: (String) -> Unit,
     apiKeyConfigured: Boolean
@@ -204,6 +218,15 @@ private fun RommyAssistant(
         if (drawerOpen) androidx.compose.material3.DrawerValue.Open else androidx.compose.material3.DrawerValue.Closed
     )
     val scope = rememberCoroutineScope()
+    val listening = listeningState.value
+    val listeningLabel = when (listening) {
+        ListeningState.LISTENING -> "слушаю тебя"
+        ListeningState.SPEAKING -> "говори, я слушаю"
+        ListeningState.PROCESSING -> "распознаю речь"
+        ListeningState.ERROR -> "не удалось услышать"
+        ListeningState.UNAVAILABLE -> "распознавание недоступно"
+        ListeningState.IDLE -> "аниме-помощница"
+    }
 
     LaunchedEffect(voicePrompts) {
         voicePrompts.collect { spokenText ->
@@ -343,7 +366,7 @@ private fun RommyAssistant(
                     title = {
                         Column {
                             Text("rommy", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                            Text("аниме-помощница", color = Muted, fontSize = 11.sp)
+                            Text(listeningLabel, color = if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING) Pink else Muted, fontSize = 11.sp)
                         }
                     },
                     navigationIcon = {
@@ -393,7 +416,15 @@ private fun RommyAssistant(
                                     unfocusedIndicatorColor = Color.Transparent
                                 )
                             )
-                            IconButton(onClick = onListen) { Text("♩", color = Lavender, fontSize = 23.sp) }
+                            IconButton(onClick = {
+                                if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) onStopListening() else onListen()
+                            }) {
+                                Text(
+                                    if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) "■" else "●",
+                                    color = if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) Pink else Lavender,
+                                    fontSize = 20.sp
+                                )
+                            }
                             IconButton(onClick = {
                                 val value = prompt.trim()
                                 if (value.isNotEmpty()) {
@@ -476,17 +507,20 @@ private fun WelcomeScreen(
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Center
     ) {
-        AnimeMark(Modifier.size(104.dp))
+        Box(contentAlignment = Alignment.Center) {
+            Box(Modifier.size(142.dp).clip(CircleShape).background(Brush.radialGradient(listOf(Pink.copy(alpha = 0.24f), Lavender.copy(alpha = 0.08f), Color.Transparent))))
+            AnimeMark(Modifier.size(112.dp))
+        }
         Spacer(Modifier.height(24.dp))
         Text("привет, я ромми", fontSize = 31.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp)
-        Text("твой маленький помощник в большом мире.", color = Muted, fontSize = 16.sp)
+        Text("твой личный AI-компаньон. поговорим, придумаем, разберёмся.", color = Muted, fontSize = 16.sp, lineHeight = 23.sp)
         Spacer(Modifier.height(28.dp))
         AnimatedVisibility(visible = showCapabilities) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("с чего начнём?", color = Lavender, fontWeight = FontWeight.SemiBold)
-                SuggestionCard("✦", "помоги разобраться", "объясни сложную тему простыми словами") { onPrompt("объясни сложную тему простыми словами") }
-                SuggestionCard("⌁", "организуй мой день", "составь план на сегодня") { onPrompt("составь план на сегодня") }
-                SuggestionCard("◈", "быстрые действия", "поставь таймер на 10 минут") { onPrompt("поставь таймер на 10 минут") }
+                Text("что сделаем сегодня?", color = Lavender, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                SuggestionCard("✧", "объясни сложное", "разложи тему по полочкам") { onPrompt("объясни сложную тему простыми словами") }
+                SuggestionCard("⌁", "спланируй мой день", "помоги с делами и расписанием") { onPrompt("помоги спланировать мой день") }
+                SuggestionCard("◈", "помощь с телефоном", "открой приложение или поставь таймер") { onPrompt("поставь таймер на 10 минут") }
             }
         }
     }
@@ -533,7 +567,13 @@ private fun ChatBubble(message: ChatMessage) {
             ),
             modifier = Modifier.fillMaxWidth(if (message.fromUser) 0.84f else 0.9f)
         ) {
-            Text(message.text, modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp), fontSize = 15.sp, lineHeight = 22.sp)
+            Column(Modifier.padding(horizontal = 17.dp, vertical = 14.dp)) {
+                if (!message.fromUser) {
+                    Text("rommy", color = Lavender, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                }
+                Text(message.text, fontSize = 15.sp, lineHeight = 23.sp)
+            }
         }
     }
 }
