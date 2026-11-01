@@ -1,8 +1,12 @@
 package com.rommy.ai
 
 import android.Manifest
+import android.app.role.RoleManager
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Build
+import android.content.Intent
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -104,6 +108,8 @@ class MainActivity : ComponentActivity() {
     private val voicePrompts = MutableSharedFlow<String>(extraBufferCapacity = 1)
     private val listeningState = mutableStateOf(ListeningState.IDLE)
 
+    private val assistantRoleRequest = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
+
     private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) recognizer.start()
     }
@@ -130,9 +136,23 @@ class MainActivity : ComponentActivity() {
                     onStopListening = ::stopListening,
                     onAsk = { prompt, history -> askAssistant(prompt, history, assistantSettings, geminiClient) },
                     onSaveApiKey = assistantSettings::saveGeminiApiKey,
+                    onRequestAssistantRole = ::requestAssistantRole,
                     apiKeyConfigured = assistantSettings.getGeminiApiKey() != null
                 )
             }
+        }
+    }
+
+    private fun requestAssistantRole() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = getSystemService(RoleManager::class.java)
+            if (roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT) &&
+                !roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)
+            ) {
+                assistantRoleRequest.launch(roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT))
+            }
+        } else {
+            startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
         }
     }
 
@@ -207,6 +227,7 @@ private fun RommyAssistant(
     onStopListening: () -> Unit,
     onAsk: (String, List<Pair<String, String>>) -> Flow<String>,
     onSaveApiKey: (String) -> Unit,
+    onRequestAssistantRole: () -> Unit,
     apiKeyConfigured: Boolean
 ) {
     val messages = remember { mutableStateListOf<ChatMessage>().apply { chatHistory.activeMessages().forEach { add(ChatMessage(it.text, it.role == "user")) } } }
@@ -298,6 +319,11 @@ private fun RommyAssistant(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(if (hasApiKey) "ключ уже сохранён на устройстве. введи новый, чтобы заменить его, или оставь поле пустым для удаления." else "добавь ключ Google AI Studio, чтобы включить настоящий ИИ-диалог.", color = Muted, fontSize = 13.sp)
+                    Text("системный режим", color = Lavender, fontWeight = FontWeight.SemiBold)
+                    Text("назначь Rommy помощником Android, чтобы вызывать её системным жестом или кнопкой ассистента.", color = Muted, fontSize = 12.sp)
+                    TextButton(onClick = onRequestAssistantRole, modifier = Modifier.fillMaxWidth()) {
+                        Text("назначить помощником по умолчанию")
+                    }
                     OutlinedTextField(
                         value = apiKeyInput,
                         onValueChange = { apiKeyInput = it },
