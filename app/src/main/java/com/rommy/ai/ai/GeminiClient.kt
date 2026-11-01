@@ -10,6 +10,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
+data class GeminiImage(val mimeType: String, val base64Data: String)
+
 /** Gemini REST client. Network work is always performed away from the main thread. */
 class GeminiClient(
     private val model: String = "gemini-2.5-flash"
@@ -19,7 +21,7 @@ class GeminiClient(
      * Streams incremental text chunks from Gemini's SSE endpoint. The caller can
      * render tokens as they arrive and cancel the flow to close the HTTP request.
      */
-    fun stream(apiKey: String, prompt: String, history: List<Pair<String, String>>): Flow<String> = channelFlow {
+    fun stream(apiKey: String, prompt: String, history: List<Pair<String, String>>, image: GeminiImage? = null): Flow<String> = channelFlow {
         require(apiKey.isNotBlank()) { "сначала добавь Gemini API key в настройках." }
         val contents = JSONArray()
         history.takeLast(20).forEach { (role, text) ->
@@ -31,11 +33,16 @@ class GeminiClient(
                 )
             }
         }
-        contents.put(
-            JSONObject()
-                .put("role", "user")
-                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))
-        )
+        val userParts = JSONArray().put(JSONObject().put("text", prompt))
+        image?.let {
+            userParts.put(
+                JSONObject().put(
+                    "inlineData",
+                    JSONObject().put("mimeType", it.mimeType).put("data", it.base64Data)
+                )
+            )
+        }
+        contents.put(JSONObject().put("role", "user").put("parts", userParts))
         val payload = JSONObject().put("contents", contents)
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM_INSTRUCTION))))
             .put("generationConfig", JSONObject().put("temperature", 0.85).put("maxOutputTokens", 4096))
