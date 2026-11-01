@@ -1,6 +1,7 @@
 package com.rommy.ai.commands
 
 import com.rommy.ai.apps.AppLauncher
+import com.rommy.ai.timers.TimerManager
 import com.rommy.ai.voice.ResponseComposer
 import java.util.Locale
 import kotlin.math.roundToLong
@@ -8,6 +9,7 @@ import kotlin.math.roundToLong
 /** Deterministic local commands. AI/LLM routing can be added behind this boundary later. */
 class CommandRouter(
     private val launcher: AppLauncher,
+    private val timerManager: TimerManager,
     private val responses: ResponseComposer = ResponseComposer(),
 ) {
     fun handle(text: String): CommandResult {
@@ -30,9 +32,12 @@ class CommandRouter(
 
         if (lower.contains("таймер") || lower.contains("timer")) {
             val seconds = parseDurationSeconds(lower)
-            return if (seconds != null) {
-                CommandResult(true, "таймер на ${formatDuration(seconds)}. пока это команда-заготовка, подключение системного будильника следующим шагом.")
-            } else CommandResult(false, "скажи, например: поставь таймер на 10 минут.")
+                ?: return CommandResult(false, "скажи, например: поставь таймер на 10 минут.")
+            return if (timerManager.schedule(seconds)) {
+                CommandResult(true, responses.acknowledgement("таймер на ${formatDuration(seconds)}"))
+            } else {
+                CommandResult(false, "на телефоне не разрешены точные таймеры. открой разрешение точных будильников для Rommy AI.")
+            }
         }
 
         return CommandResult(false, "я пока не знаю эту команду. можно открыть приложение или поставить таймер.")
@@ -45,11 +50,9 @@ class CommandRouter(
     }
 
     private fun parseDurationSeconds(text: String): Long? {
-        val match = Regex("(\\d+(?:[.,]\\d+)?)\\s*(секунд|секунды|сек|s|минут|минуты|мин|m|час|часа|ч|h)").find(text)
-            ?: return null
+        val match = Regex("(\\d+(?:[.,]\\d+)?)\\s*(секунд|секунды|сек|s|минут|минуты|мин|m|час|часа|ч|h)").find(text) ?: return null
         val value = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return null
-        val unit = match.groupValues[2]
-        val multiplier = when (unit) {
+        val multiplier = when (match.groupValues[2]) {
             "час", "часа", "ч", "h" -> 3600.0
             "минут", "минуты", "мин", "m" -> 60.0
             else -> 1.0
