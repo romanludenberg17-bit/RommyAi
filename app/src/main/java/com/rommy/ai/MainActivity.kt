@@ -73,6 +73,8 @@ import com.rommy.ai.voice.SpeechRecognizerController
 import com.rommy.ai.voice.SpeechStyle
 import com.rommy.ai.voice.VoiceCoordinator
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 private val Ink = Color(0xFF11101A)
@@ -85,6 +87,9 @@ private val Muted = Color(0xFFB9B3C9)
 class MainActivity : ComponentActivity() {
     private lateinit var voice: VoiceCoordinator
     private lateinit var recognizer: SpeechRecognizerController
+    private lateinit var assistantSettings: AssistantSettings
+    private lateinit var geminiClient: GeminiClient
+    private lateinit var chatHistory: ChatHistoryStore
 
     private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) recognizer.start()
@@ -94,9 +99,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         voice = VoiceCoordinator(this)
         recognizer = SpeechRecognizerController(this, onResult = ::handleRecognizedCommand)
-        val assistantSettings = AssistantSettings(this)
-        val geminiClient = GeminiClient()
-        val chatHistory = ChatHistoryStore(this)
+        assistantSettings = AssistantSettings(this)
+        geminiClient = GeminiClient()
+        chatHistory = ChatHistoryStore(this)
         setContent {
             RommyTheme {
                 RommyAssistant(
@@ -118,7 +123,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleRecognizedCommand(text: String) {
-        runLocalCommand(text)
+        CoroutineScope(Dispatchers.Main).launch {
+            val history = chatHistory.activeMessages().map { it.role to it.text }
+            val saved = chatHistory.activeMessages().toMutableList()
+            saved.add(StoredChatMessage("user", text))
+            val response = askAssistant(text, history, assistantSettings, geminiClient)
+            saved.add(StoredChatMessage("assistant", response))
+            chatHistory.saveActive(saved)
+            voice.speak(response, Locale.getDefault(), SpeechStyle.DEFAULT)
+        }
     }
 
     private suspend fun askAssistant(
@@ -129,22 +142,15 @@ class MainActivity : ComponentActivity() {
     ): String {
         val local = CommandRouter(AppLauncher(this), TimerManager(this)).handle(text)
         if (local.handled) {
-            voice.speak(local.response, Locale.getDefault(), SpeechStyle.CHEERFUL)
             return local.response
         }
         val key = settings.getGeminiApiKey()
             ?: return "подключи Gemini API key в настройках, чтобы я могла отвечать на вопросы."
         return try {
-            gemini.generate(key, text, history).also { voice.speak(it, Locale.getDefault(), SpeechStyle.DEFAULT) }
+            gemini.generate(key, text, history)
         } catch (error: Exception) {
             "не удалось получить ответ: ${error.message ?: "ошибка соединения"}"
         }
-    }
-
-    private fun runLocalCommand(text: String): String {
-        val result = CommandRouter(AppLauncher(this), TimerManager(this)).handle(text)
-        voice.speak(result.response, Locale.getDefault(), if (result.handled) SpeechStyle.CHEERFUL else SpeechStyle.CALM)
-        return result.response
     }
 
     override fun onDestroy() {
@@ -385,6 +391,7 @@ private fun RommyAssistant(
                                     scope.launch {
                                         val answer = onAsk(value, history)
                                         messages.add(ChatMessage(answer, false))
+                                        voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
                                         chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
                                         conversations = chatHistory.conversations()
                                         isThinking = false
