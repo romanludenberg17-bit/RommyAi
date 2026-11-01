@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +57,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -521,12 +525,34 @@ private fun ChatBubble(message: ChatMessage) {
 
 @Composable
 private fun AnimeMark(modifier: Modifier = Modifier) {
-    Box(
-        modifier.clip(CircleShape).background(
-            Brush.linearGradient(listOf(Color(0xFF9D86E9), Color(0xFFED9DC1), Color(0xFF6E6BC4)))
-        ),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("り", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+    Canvas(modifier.clip(CircleShape).background(
+        Brush.linearGradient(listOf(Color(0xFF9D86E9), Color(0xFFED9DC1), Color(0xFF6E6BC4)))
+    )) {
+        val w = size.width
+        val h = size.height
+        val unit = minOf(w, h)
+        drawCircle(Color(0xFF594B91), radius = unit * 0.48f, center = Offset(w / 2f, h / 2f))
+        drawOval(
+            color = Color(0xFFFFE0D7),
+            topLeft = Offset(w * 0.22f, h * 0.24f),
+            size = Size(w * 0.56f, h * 0.62f)
+        )
+        val hair = Path().apply {
+            moveTo(w * 0.14f, h * 0.49f)
+            cubicTo(w * 0.08f, h * 0.12f, w * 0.34f, h * 0.03f, w * 0.55f, h * 0.08f)
+            cubicTo(w * 0.86f, h * 0.10f, w * 0.94f, h * 0.33f, w * 0.86f, h * 0.60f)
+            lineTo(w * 0.76f, h * 0.43f)
+            cubicTo(w * 0.64f, h * 0.55f, w * 0.54f, h * 0.44f, w * 0.48f, h * 0.35f)
+            cubicTo(w * 0.39f, h * 0.49f, w * 0.26f, h * 0.53f, w * 0.14f, h * 0.49f)
+            close()
+        }
+        drawPath(hair, Color(0xFF725BB7))
+        drawOval(Color(0xFF382B55), Offset(w * 0.34f, h * 0.52f), Size(w * 0.09f, h * 0.15f))
+        drawOval(Color(0xFF382B55), Offset(w * 0.59f, h * 0.52f), Size(w * 0.09f, h * 0.15f))
+        drawCircle(Color.White, unit * 0.025f, Offset(w * 0.39f, h * 0.55f))
+        drawCircle(Color.White, unit * 0.025f, Offset(w * 0.64f, h * 0.55f))
+        drawCircle(Color(0xFFFFA6B9), unit * 0.045f, Offset(w * 0.29f, h * 0.70f))
+        drawCircle(Color(0xFFFFA6B9), unit * 0.045f, Offset(w * 0.71f, h * 0.70f))
+        drawLine(Color(0xFFB86F83), Offset(w * 0.47f, h * 0.76f), Offset(w * 0.53f, h * 0.76f), strokeWidth = unit * 0.018f)
     }
 }
