@@ -79,8 +79,12 @@ import com.rommy.ai.voice.SpeechRecognizerController
 import com.rommy.ai.voice.SpeechStyle
 import com.rommy.ai.voice.VoiceCoordinator
 import java.util.Locale
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 
 private val Ink = Color(0xFF11101A)
@@ -145,23 +149,23 @@ class MainActivity : ComponentActivity() {
         voicePrompts.tryEmit(text)
     }
 
-    private suspend fun askAssistant(
+    private fun askAssistant(
         text: String,
         history: List<Pair<String, String>>,
         settings: AssistantSettings,
         gemini: GeminiClient
-    ): String {
-        val local = CommandRouter(AppLauncher(this), TimerManager(this)).handle(text)
+    ): Flow<String> = flow {
+        val local = CommandRouter(AppLauncher(this@MainActivity), TimerManager(this@MainActivity)).handle(text)
         if (local.handled) {
-            return local.response
+            emit(local.response)
+            return@flow
         }
         val key = settings.getGeminiApiKey()
-            ?: return "подключи Gemini API key в настройках, чтобы я могла отвечать на вопросы."
-        return try {
-            gemini.generate(key, text, history)
-        } catch (error: Exception) {
-            "не удалось получить ответ: ${error.message ?: "ошибка соединения"}"
+        if (key == null) {
+            emit("подключи Gemini API key в настройках, чтобы я могла отвечать на вопросы.")
+            return@flow
         }
+        emitAll(gemini.stream(key, text, history))
     }
 
     override fun onDestroy() {
@@ -200,7 +204,7 @@ private fun RommyAssistant(
     listeningState: State<ListeningState>,
     onListen: () -> Unit,
     onStopListening: () -> Unit,
-    onAsk: suspend (String, List<Pair<String, String>>) -> String,
+    onAsk: (String, List<Pair<String, String>>) -> Flow<String>,
     onSaveApiKey: (String) -> Unit,
     apiKeyConfigured: Boolean
 ) {
@@ -237,11 +241,25 @@ private fun RommyAssistant(
             showCapabilities = false
             isThinking = true
             try {
-                val answer = onAsk(spokenText, history)
-                messages.add(ChatMessage(answer, false))
-                chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
-                conversations = chatHistory.conversations()
-                voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
+                val answerIndex = messages.size
+                val answerBuilder = StringBuilder()
+                messages.add(ChatMessage("", false))
+                try {
+                    onAsk(spokenText, history).collect { chunk ->
+                        answerBuilder.append(chunk)
+                        messages[answerIndex] = ChatMessage(answerBuilder.toString(), false)
+                    }
+                    val answer = answerBuilder.toString().ifBlank { "не получилось получить ответ. попробуй ещё раз." }
+                    messages[answerIndex] = ChatMessage(answer, false)
+                    chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                    conversations = chatHistory.conversations()
+                    voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
+                } catch (error: Exception) {
+                    val message = "не удалось получить ответ: ${error.message ?: "ошибка соединения"}"
+                    messages[answerIndex] = ChatMessage(message, false)
+                    chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                    conversations = chatHistory.conversations()
+                }
             } finally {
                 isThinking = false
             }
@@ -437,11 +455,25 @@ private fun RommyAssistant(
                                     showCapabilities = false
                                     scope.launch {
                                         try {
-                                            val answer = onAsk(value, history)
-                                            messages.add(ChatMessage(answer, false))
-                                            voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
-                                            chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
-                                            conversations = chatHistory.conversations()
+                                            val answerIndex = messages.size
+                                            val answerBuilder = StringBuilder()
+                                            messages.add(ChatMessage("", false))
+                                            try {
+                                                onAsk(value, history).collect { chunk ->
+                                                    answerBuilder.append(chunk)
+                                                    messages[answerIndex] = ChatMessage(answerBuilder.toString(), false)
+                                                }
+                                                val answer = answerBuilder.toString().ifBlank { "не получилось получить ответ. попробуй ещё раз." }
+                                                messages[answerIndex] = ChatMessage(answer, false)
+                                                voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
+                                                chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                                                conversations = chatHistory.conversations()
+                                            } catch (error: Exception) {
+                                                val message = "не удалось получить ответ: ${error.message ?: "ошибка соединения"}"
+                                                messages[answerIndex] = ChatMessage(message, false)
+                                                chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                                                conversations = chatHistory.conversations()
+                                            }
                                         } finally {
                                             isThinking = false
                                         }
