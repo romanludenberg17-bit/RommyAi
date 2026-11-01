@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -77,8 +78,8 @@ import com.rommy.ai.voice.SpeechRecognizerController
 import com.rommy.ai.voice.SpeechStyle
 import com.rommy.ai.voice.VoiceCoordinator
 import java.util.Locale
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 
 private val Ink = Color(0xFF11101A)
@@ -94,6 +95,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var assistantSettings: AssistantSettings
     private lateinit var geminiClient: GeminiClient
     private lateinit var chatHistory: ChatHistoryStore
+    private val voicePrompts = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) recognizer.start()
@@ -111,6 +113,7 @@ class MainActivity : ComponentActivity() {
                 RommyAssistant(
                     voice = voice,
                     chatHistory = chatHistory,
+                    voicePrompts = voicePrompts,
                     onListen = ::startListening,
                     onAsk = { prompt, history -> askAssistant(prompt, history, assistantSettings, geminiClient) },
                     onSaveApiKey = assistantSettings::saveGeminiApiKey,
@@ -127,15 +130,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleRecognizedCommand(text: String) {
-        CoroutineScope(Dispatchers.Main).launch {
-            val history = chatHistory.activeMessages().map { it.role to it.text }
-            val saved = chatHistory.activeMessages().toMutableList()
-            saved.add(StoredChatMessage("user", text))
-            val response = askAssistant(text, history, assistantSettings, geminiClient)
-            saved.add(StoredChatMessage("assistant", response))
-            chatHistory.saveActive(saved)
-            voice.speak(response, Locale.getDefault(), SpeechStyle.DEFAULT)
-        }
+        voicePrompts.tryEmit(text)
     }
 
     private suspend fun askAssistant(
@@ -189,6 +184,7 @@ private data class ChatMessage(val text: String, val fromUser: Boolean)
 private fun RommyAssistant(
     voice: VoiceCoordinator,
     chatHistory: ChatHistoryStore,
+    voicePrompts: SharedFlow<String>,
     onListen: () -> Unit,
     onAsk: suspend (String, List<Pair<String, String>>) -> String,
     onSaveApiKey: (String) -> Unit,
@@ -197,7 +193,6 @@ private fun RommyAssistant(
     val messages = remember { mutableStateListOf<ChatMessage>().apply { chatHistory.activeMessages().forEach { add(ChatMessage(it.text, it.role == "user")) } } }
     var prompt by remember { mutableStateOf("") }
     var drawerOpen by remember { mutableStateOf(false) }
-    var listening by remember { mutableStateOf(false) }
     var showCapabilities by remember { mutableStateOf(true) }
     var isThinking by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
@@ -209,6 +204,26 @@ private fun RommyAssistant(
         if (drawerOpen) androidx.compose.material3.DrawerValue.Open else androidx.compose.material3.DrawerValue.Closed
     )
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(voicePrompts) {
+        voicePrompts.collect { spokenText ->
+            messages.add(ChatMessage(spokenText, true))
+            val history = messages.dropLast(1).map { (if (it.fromUser) "user" else "assistant") to it.text }
+            chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+            conversations = chatHistory.conversations()
+            showCapabilities = false
+            isThinking = true
+            try {
+                val answer = onAsk(spokenText, history)
+                messages.add(ChatMessage(answer, false))
+                chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                conversations = chatHistory.conversations()
+                voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
+            } finally {
+                isThinking = false
+            }
+        }
+    }
 
     if (showHistory) {
         AlertDialog(
@@ -301,7 +316,7 @@ private fun RommyAssistant(
                             Text("ромми учится", fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                "подключение нейросети, память и расширенные инструменты — следующие этапы разработки.",
+                                "Gemini отвечает на сообщения, а история чатов сохраняется на устройстве. голосовой режим и инструменты расширяются.",
                                 color = Muted,
                                 fontSize = 12.sp
                             )
@@ -378,10 +393,7 @@ private fun RommyAssistant(
                                     unfocusedIndicatorColor = Color.Transparent
                                 )
                             )
-                            IconButton(onClick = {
-                                listening = true
-                                onListen()
-                            }) { Text("♩", color = if (listening) Pink else Lavender, fontSize = 23.sp) }
+                            IconButton(onClick = onListen) { Text("♩", color = Lavender, fontSize = 23.sp) }
                             IconButton(onClick = {
                                 val value = prompt.trim()
                                 if (value.isNotEmpty()) {
@@ -393,12 +405,15 @@ private fun RommyAssistant(
                                     isThinking = true
                                     showCapabilities = false
                                     scope.launch {
-                                        val answer = onAsk(value, history)
-                                        messages.add(ChatMessage(answer, false))
-                                        voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
-                                        chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
-                                        conversations = chatHistory.conversations()
-                                        isThinking = false
+                                        try {
+                                            val answer = onAsk(value, history)
+                                            messages.add(ChatMessage(answer, false))
+                                            voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
+                                            chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
+                                            conversations = chatHistory.conversations()
+                                        } finally {
+                                            isThinking = false
+                                        }
                                     }
                                 }
                             }) {
