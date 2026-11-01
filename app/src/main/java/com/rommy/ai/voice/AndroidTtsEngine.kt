@@ -3,22 +3,27 @@ package com.rommy.ai.voice
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import kotlin.coroutines.resume
 
 /** Immediate fallback while the neural voice packs are being integrated. */
 class AndroidTtsEngine(context: Context) : SpeechEngine, TextToSpeech.OnInitListener {
     private val tts = TextToSpeech(context.applicationContext, this)
-    private var ready = false
+    private val initialization = CompletableDeferred<Boolean>()
 
     override fun onInit(status: Int) {
-        ready = status == TextToSpeech.SUCCESS
+        initialization.complete(status == TextToSpeech.SUCCESS)
     }
 
     override suspend fun speak(text: String, locale: Locale, style: SpeechStyle) {
-        if (!ready || text.isBlank()) return
-        tts.language = locale
+        if (text.isBlank()) return
+        val ready = withTimeoutOrNull(15_000) { initialization.await() } ?: false
+        if (!ready) return
+        val requestedLocale = if (tts.isLanguageAvailable(locale) >= TextToSpeech.LANG_AVAILABLE) locale else Locale.getDefault()
+        tts.language = requestedLocale
         tts.setSpeechRate(style.rate)
         tts.setPitch(style.pitch)
         suspendCancellableCoroutine { continuation ->
@@ -41,5 +46,8 @@ class AndroidTtsEngine(context: Context) : SpeechEngine, TextToSpeech.OnInitList
         tts.stop()
     }
 
-    override fun release() = tts.shutdown()
+    override fun release() {
+        initialization.complete(false)
+        tts.shutdown()
+    }
 }
