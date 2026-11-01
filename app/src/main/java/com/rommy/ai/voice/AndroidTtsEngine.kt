@@ -37,7 +37,9 @@ class AndroidTtsEngine(context: Context) : SpeechEngine, TextToSpeech.OnInitList
         }
     }
 
-    override fun stop() = tts.stop()
+    override fun stop() {
+        tts.stop()
+    }
 
     override fun release() = tts.shutdown()
 }
