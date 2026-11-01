@@ -76,6 +76,7 @@ import com.rommy.ai.apps.AppLauncher
 import com.rommy.ai.commands.CommandRouter
 import com.rommy.ai.timers.TimerManager
 import com.rommy.ai.voice.SpeechRecognizerController
+import com.rommy.ai.voice.ListeningState
 import com.rommy.ai.voice.SpeechStyle
 import com.rommy.ai.voice.VoiceCoordinator
 import java.util.Locale
