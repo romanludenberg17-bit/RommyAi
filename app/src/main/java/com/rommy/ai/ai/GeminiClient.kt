@@ -1,7 +1,6 @@
 package com.rommy.ai.ai
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
@@ -80,7 +79,6 @@ class GeminiClient(
         } finally {
             connection.disconnect()
         }
-        awaitClose { connection.disconnect() }
     }
 
     suspend fun generate(apiKey: String, prompt: String, history: List<Pair<String, String>>): String =
