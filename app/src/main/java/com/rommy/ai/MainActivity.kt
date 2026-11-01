@@ -117,7 +117,27 @@ class MainActivity : ComponentActivity() {
         runLocalCommand(text)
     }
 
-    private suspend fun askAssistant(\n        text: String,\n        history: List<Pair<String, String>>,\n        settings: AssistantSettings,\n        gemini: GeminiClient\n    ): String {\n        val local = CommandRouter(AppLauncher(this), TimerManager(this)).handle(text)\n        if (local.handled) {\n            voice.speak(local.response, Locale.getDefault(), SpeechStyle.CHEERFUL)\n            return local.response\n        }\n        val key = settings.getGeminiApiKey()\n            ?: return "подключи Gemini API key в настройках, чтобы я могла отвечать на вопросы."\n        return try {\n            gemini.generate(key, text, history).also { voice.speak(it, Locale.getDefault(), SpeechStyle.DEFAULT) }\n        } catch (error: Exception) {\n            "не удалось получить ответ: ${error.message ?: "ошибка соединения"}"\n        }\n    }\n\n    private fun runLocalCommand(text: String): String {
+    private suspend fun askAssistant(
+        text: String,
+        history: List<Pair<String, String>>,
+        settings: AssistantSettings,
+        gemini: GeminiClient
+    ): String {
+        val local = CommandRouter(AppLauncher(this), TimerManager(this)).handle(text)
+        if (local.handled) {
+            voice.speak(local.response, Locale.getDefault(), SpeechStyle.CHEERFUL)
+            return local.response
+        }
+        val key = settings.getGeminiApiKey()
+            ?: return "подключи Gemini API key в настройках, чтобы я могла отвечать на вопросы."
+        return try {
+            gemini.generate(key, text, history).also { voice.speak(it, Locale.getDefault(), SpeechStyle.DEFAULT) }
+        } catch (error: Exception) {
+            "не удалось получить ответ: ${error.message ?: "ошибка соединения"}"
+        }
+    }
+
+    private fun runLocalCommand(text: String): String {
         val result = CommandRouter(AppLauncher(this), TimerManager(this)).handle(text)
         voice.speak(result.response, Locale.getDefault(), if (result.handled) SpeechStyle.CHEERFUL else SpeechStyle.CALM)
         return result.response
@@ -155,17 +175,46 @@ private data class ChatMessage(val text: String, val fromUser: Boolean)
 private fun RommyAssistant(
     voice: VoiceCoordinator,
     onListen: () -> Unit,
-    onCommand: (String) -> String
+    onAsk: suspend (String, List<Pair<String, String>>) -> String,
+    onSaveApiKey: (String) -> Unit,
+    apiKeyConfigured: Boolean
 ) {
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var prompt by remember { mutableStateOf("") }
     var drawerOpen by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
-    var showCapabilities by remember { mutableStateOf(true) }\n    var isThinking by remember { mutableStateOf(false) }\n    var showSettings by remember { mutableStateOf(false) }\n    var apiKeyInput by remember { mutableStateOf("") }
+    var showCapabilities by remember { mutableStateOf(true) }
+    var isThinking by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var apiKeyInput by remember { mutableStateOf("") }
     val drawerState = androidx.compose.material3.rememberDrawerState(
         if (drawerOpen) androidx.compose.material3.DrawerValue.Open else androidx.compose.material3.DrawerValue.Closed
     )
     val scope = rememberCoroutineScope()
+
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("подключение Gemini") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(if (apiKeyConfigured) "ключ уже сохранён на устройстве. введи новый, чтобы заменить его, или оставь поле пустым для удаления." else "добавь ключ Google AI Studio, чтобы включить настоящий ИИ-диалог.", color = Muted, fontSize = 13.sp)
+                    OutlinedTextField(
+                        value = apiKeyInput,
+                        onValueChange = { apiKeyInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Gemini API key") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onSaveApiKey(apiKeyInput); apiKeyInput = ""; showSettings = false }) { Text("сохранить") }
+            },
+            dismissButton = { TextButton(onClick = { showSettings = false }) { Text("отмена") } }
+        )
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -214,7 +263,10 @@ private fun RommyAssistant(
                     NavigationDrawerItem(
                         label = { Text("⚙   настройки") },
                         selected = false,
-                        onClick = { scope.launch { drawerState.close() } }
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showSettings = true
+                        }
                     )
                 }
             }
@@ -285,9 +337,14 @@ private fun RommyAssistant(
                                 if (value.isNotEmpty()) {
                                     messages.add(ChatMessage(value, true))
                                     prompt = ""
-                                    val answer = onCommand(value)
-                                    messages.add(ChatMessage(answer, false))
+                                    val history = messages.dropLast(1).map { (if (it.fromUser) "user" else "assistant") to it.text }
+                                    isThinking = true
                                     showCapabilities = false
+                                    scope.launch {
+                                        val answer = onAsk(value, history)
+                                        messages.add(ChatMessage(answer, false))
+                                        isThinking = false
+                                    }
                                 }
                             }) {
                                 Box(
@@ -322,6 +379,15 @@ private fun RommyAssistant(
                 ) {
                     items(messages) { message ->
                         ChatBubble(message)
+                    }
+                    if (isThinking) {
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                AnimeMark(Modifier.size(34.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Text("думаю…", color = Lavender, fontSize = 14.sp)
+                            }
+                        }
                     }
                 }
             }
