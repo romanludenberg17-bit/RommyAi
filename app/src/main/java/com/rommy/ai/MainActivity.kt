@@ -6,9 +6,12 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Build
 import android.content.Intent
+import android.net.Uri
+import android.util.Base64
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
@@ -77,6 +80,7 @@ import com.rommy.ai.ai.AssistantSettings
 import com.rommy.ai.ai.ChatHistoryStore
 import com.rommy.ai.ai.StoredChatMessage
 import com.rommy.ai.ai.GeminiClient
+import com.rommy.ai.ai.GeminiImage
 import com.rommy.ai.apps.AppLauncher
 import com.rommy.ai.commands.CommandRouter
 import com.rommy.ai.timers.TimerManager
@@ -85,6 +89,7 @@ import com.rommy.ai.voice.ListeningState
 import com.rommy.ai.voice.SpeechStyle
 import com.rommy.ai.voice.VoiceCoordinator
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -92,6 +97,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val Ink = Color(0xFF11101A)
 private val Panel = Color(0xFF1B1927)
@@ -107,6 +113,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var geminiClient: GeminiClient
     private lateinit var chatHistory: ChatHistoryStore
     private val voicePrompts = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    private val selectedImage = mutableStateOf<Uri?>(null)
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        selectedImage.value = uri
+    }
     private val listeningState = mutableStateOf(ListeningState.IDLE)
 
     private val assistantRoleRequest = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
@@ -136,7 +146,10 @@ class MainActivity : ComponentActivity() {
                     onListen = ::startListening,
                     onStopListening = ::stopListening,
                     autoStartListening = intent?.action == Intent.ACTION_ASSIST,
-                    onAsk = { prompt, history -> askAssistant(prompt, history, assistantSettings, geminiClient) },
+                    onAsk = { prompt, history, image -> askAssistant(prompt, history, image, assistantSettings, geminiClient) },
+                    selectedImage = selectedImage,
+                    onAttachImage = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onClearImage = { selectedImage.value = null },
                     onSaveApiKey = assistantSettings::saveGeminiApiKey,
                     onRequestAssistantRole = ::requestAssistantRole,
                     apiKeyConfigured = assistantSettings.getGeminiApiKey() != null
@@ -175,11 +188,12 @@ class MainActivity : ComponentActivity() {
     private fun askAssistant(
         text: String,
         history: List<Pair<String, String>>,
+        imageUri: Uri?,
         settings: AssistantSettings,
         gemini: GeminiClient
     ): Flow<String> = flow {
         val local = CommandRouter(AppLauncher(this@MainActivity), TimerManager(this@MainActivity)).handle(text)
-        if (local.handled) {
+        if (local.handled && imageUri == null) {
             emit(local.response)
             return@flow
         }
@@ -188,7 +202,17 @@ class MainActivity : ComponentActivity() {
             emit("подключи Gemini API key в настройках, чтобы я могла отвечать на вопросы.")
             return@flow
         }
-        emitAll(gemini.stream(key, text, history))
+        val image = imageUri?.let { uri ->
+            withContext(Dispatchers.IO) {
+                val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
+                require(mimeType.startsWith("image/")) { "выбранный файл не является изображением." }
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("не удалось прочитать изображение.")
+                require(bytes.size <= 15 * 1024 * 1024) { "изображение слишком большое. выбери файл до 15 МБ." }
+                GeminiImage(mimeType, Base64.encodeToString(bytes, Base64.NO_WRAP))
+            }
+        }
+        emitAll(gemini.stream(key, text, history, image))
     }
 
     override fun onDestroy() {
@@ -228,7 +252,10 @@ private fun RommyAssistant(
     onListen: () -> Unit,
     onStopListening: () -> Unit,
     autoStartListening: Boolean,
-    onAsk: (String, List<Pair<String, String>>) -> Flow<String>,
+    onAsk: (String, List<Pair<String, String>>, Uri?) -> Flow<String>,
+    selectedImage: State<Uri?>,
+    onAttachImage: () -> Unit,
+    onClearImage: () -> Unit,
     onSaveApiKey: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
     apiKeyConfigured: Boolean
@@ -275,7 +302,7 @@ private fun RommyAssistant(
                 val answerBuilder = StringBuilder()
                 messages.add(ChatMessage("", false))
                 try {
-                    onAsk(spokenText, history).collect { chunk ->
+                    onAsk(spokenText, history, selectedImage.value).collect { chunk ->
                         answerBuilder.append(chunk)
                         messages[answerIndex] = ChatMessage(answerBuilder.toString(), false)
                     }
@@ -284,6 +311,7 @@ private fun RommyAssistant(
                     chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
                     conversations = chatHistory.conversations()
                     voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
+                    onClearImage()
                 } catch (error: Exception) {
                     val message = "не удалось получить ответ: ${error.message ?: "ошибка соединения"}"
                     messages[answerIndex] = ChatMessage(message, false)
@@ -493,6 +521,14 @@ private fun RommyAssistant(
             bottomBar = {
                 Surface(color = Ink, tonalElevation = 0.dp) {
                     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp)) {
+                        selectedImage.value?.let {
+                            Surface(color = Panel, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("▧  изображение прикреплено", color = Lavender, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = onClearImage) { Text("убрать") }
+                                }
+                            }
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth()
                                 .clip(RoundedCornerShape(30.dp))
@@ -502,6 +538,9 @@ private fun RommyAssistant(
                         ) {
                             IconButton(onClick = { showCapabilities = !showCapabilities }) {
                                 Text("＋", color = Lavender, fontSize = 24.sp)
+                            }
+                            IconButton(onClick = onAttachImage) {
+                                Text("▧", color = Lavender, fontSize = 20.sp)
                             }
                             OutlinedTextField(
                                 value = prompt,
@@ -532,7 +571,8 @@ private fun RommyAssistant(
                                 )
                             }
                             IconButton(onClick = {
-                                val value = prompt.trim()
+                                val imageUri = selectedImage.value
+                                val value = prompt.trim().ifBlank { if (imageUri != null) "опиши, что изображено на картинке" else "" }
                                 if (value.isNotEmpty()) {
                                     messages.add(ChatMessage(value, true))
                                     chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
@@ -547,13 +587,14 @@ private fun RommyAssistant(
                                             val answerBuilder = StringBuilder()
                                             messages.add(ChatMessage("", false))
                                             try {
-                                                onAsk(value, history).collect { chunk ->
+                                                onAsk(value, history, imageUri).collect { chunk ->
                                                     answerBuilder.append(chunk)
                                                     messages[answerIndex] = ChatMessage(answerBuilder.toString(), false)
                                                 }
                                                 val answer = answerBuilder.toString().ifBlank { "не получилось получить ответ. попробуй ещё раз." }
                                                 messages[answerIndex] = ChatMessage(answer, false)
                                                 voice.speak(answer, Locale.getDefault(), SpeechStyle.DEFAULT)
+                                                onClearImage()
                                                 chatHistory.saveActive(messages.map { StoredChatMessage(if (it.fromUser) "user" else "assistant", it.text) })
                                                 conversations = chatHistory.conversations()
                                             } catch (error: Exception) {
