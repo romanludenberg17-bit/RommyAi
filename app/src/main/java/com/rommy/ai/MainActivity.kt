@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -241,6 +242,7 @@ private fun RommyAssistant(
     var apiKeyInput by remember { mutableStateOf("") }
     var hasApiKey by remember { mutableStateOf(apiKeyConfigured) }
     var showHistory by remember { mutableStateOf(false) }
+    var showVoiceMode by remember { mutableStateOf(false) }
     var conversations by remember { mutableStateOf(chatHistory.conversations()) }
     val drawerState = androidx.compose.material3.rememberDrawerState(
         if (drawerOpen) androidx.compose.material3.DrawerValue.Open else androidx.compose.material3.DrawerValue.Closed
@@ -290,6 +292,54 @@ private fun RommyAssistant(
                 }
             } finally {
                 isThinking = false
+            }
+        }
+    }
+
+    if (showVoiceMode) {
+        Dialog(onDismissRequest = {
+            onStopListening()
+            showVoiceMode = false
+        }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(34.dp),
+                color = Panel
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 30.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    Text("разговор с ромми", color = Lavender, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                    Box(contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(184.dp).clip(CircleShape).background(Brush.radialGradient(listOf(Pink.copy(alpha = 0.28f), Lavender.copy(alpha = 0.10f), Color.Transparent))))
+                        AnimeMark(Modifier.size(142.dp))
+                    }
+                    Text(
+                        when (listening) {
+                            ListeningState.LISTENING, ListeningState.SPEAKING -> "я тебя слушаю…"
+                            ListeningState.PROCESSING -> "собираю мысли…"
+                            ListeningState.ERROR -> "не расслышала. попробуем ещё раз?"
+                            ListeningState.UNAVAILABLE -> "голосовой ввод недоступен на устройстве"
+                            ListeningState.IDLE -> "я рядом. о чём поговорим?"
+                        },
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TextButton(onClick = {
+                            onStopListening()
+                            showVoiceMode = false
+                        }) { Text("закрыть") }
+                        Button(onClick = {
+                            if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) onStopListening() else onListen()
+                        }) {
+                            Text(if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) "остановить" else "говорить")
+                        }
+                    }
+                }
             }
         }
     }
@@ -468,7 +518,12 @@ private fun RommyAssistant(
                                 )
                             )
                             IconButton(onClick = {
-                                if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) onStopListening() else onListen()
+                                if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) {
+                                    onStopListening()
+                                } else {
+                                    showVoiceMode = true
+                                    onListen()
+                                }
                             }) {
                                 Text(
                                     if (listening == ListeningState.LISTENING || listening == ListeningState.SPEAKING || listening == ListeningState.PROCESSING) "■" else "●",
