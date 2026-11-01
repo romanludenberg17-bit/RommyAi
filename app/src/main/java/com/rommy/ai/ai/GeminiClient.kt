@@ -32,7 +32,8 @@ class GeminiClient(
             )
 
             val payload = JSONObject().put("contents", contents)
-                .put("generationConfig", JSONObject().put("temperature", 0.8).put("maxOutputTokens", 2048))
+                .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM_INSTRUCTION))))
+                .put("generationConfig", JSONObject().put("temperature", 0.85).put("maxOutputTokens", 4096))
             val encodedKey = URLEncoder.encode(apiKey, Charsets.UTF_8.name())
             val connection = (URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$encodedKey")
                 .openConnection() as HttpURLConnection).apply {
