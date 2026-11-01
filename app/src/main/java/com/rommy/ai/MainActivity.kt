@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
                     listeningState = listeningState,
                     onListen = ::startListening,
                     onStopListening = ::stopListening,
+                    autoStartListening = intent?.action == Intent.ACTION_ASSIST,
                     onAsk = { prompt, history -> askAssistant(prompt, history, assistantSettings, geminiClient) },
                     onSaveApiKey = assistantSettings::saveGeminiApiKey,
                     onRequestAssistantRole = ::requestAssistantRole,
@@ -225,6 +226,7 @@ private fun RommyAssistant(
     listeningState: State<ListeningState>,
     onListen: () -> Unit,
     onStopListening: () -> Unit,
+    autoStartListening: Boolean,
     onAsk: (String, List<Pair<String, String>>) -> Flow<String>,
     onSaveApiKey: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
@@ -252,6 +254,10 @@ private fun RommyAssistant(
         ListeningState.ERROR -> "не удалось услышать"
         ListeningState.UNAVAILABLE -> "распознавание недоступно"
         ListeningState.IDLE -> "аниме-помощница"
+    }
+
+    LaunchedEffect(autoStartListening) {
+        if (autoStartListening) onListen()
     }
 
     LaunchedEffect(voicePrompts) {
