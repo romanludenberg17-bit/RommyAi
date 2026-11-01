@@ -1,40 +1,46 @@
 # Rommy AI
 
-native Android voice assistant with an anime character, bilingual speech, wake-word activation, app control, timers, neural TTS and an optional AI mode.
+**Rommy** is a native Android AI assistant with an anime-inspired personality and interface. The product direction is a Gemini-style assistant experience: conversational AI, voice interaction, useful phone actions, persistent chats and an expressive character.
 
-## direction
+## Current implementation
 
-Rommy AI is being built as a native Android 17 application using Kotlin + Jetpack Compose (API 37).
+- Kotlin + Jetpack Compose, Android API 26+
+- Dark expressive anime-inspired chat UI
+- Gemini API integration using the `gemini-2.5-flash` model
+- Multi-turn conversation context
+- API key encrypted with Android Keystore
+- Persistent recent conversations stored locally
+- Local commands for launching installed apps and setting timers
+- Android speech recognition and text-to-speech fallback
+- TTS waits for asynchronous engine initialization instead of silently dropping early speech
 
-### core
+## First launch
 
-- Russian + English speech recognition with automatic language detection
-- wake-word activation and hands-free listening
-- lock-screen / background assistant flow where Android and the device permit it
-- timer and alarm actions
-- installed-app discovery and launching, including apps installed outside Google Play
-- assistant-style intent routing
-- AI conversation mode with pluggable LLM backends
-- natural female anime-style neural voice with replaceable voice packs
-- expressive speech styles and varied short responses
-- VRM / Live2D character support
-- lip-sync, blinking, idle motion and emotion transitions
-- optional local/offline speech and AI components
+1. Install the APK from the latest successful GitHub Actions run.
+2. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/apikey).
+3. Open Rommy → menu → **Настройки** and save the key.
+4. Start chatting. Local actions such as opening apps and setting timers are handled on-device; other prompts are sent to Gemini.
 
-## voice quality
+The API key is encrypted using Android Keystore and is not committed to the repository. Gemini API usage may be billed or rate-limited according to Google's current terms.
 
-Voice is treated as a first-class subsystem rather than a thin `TextToSpeech` wrapper.
+## Product direction
 
-The app already has a replaceable `SpeechEngine` abstraction and an Android TTS fallback. The primary target is a neural on-device engine with high-quality Russian and English speech, sentence chunking, caching, interruption support and expressive delivery.
+The goal is a capable personal assistant, not just a chat screen. Planned development areas:
 
-See [`docs/VOICE_ARCHITECTURE.md`](docs/VOICE_ARCHITECTURE.md).
+- Streaming responses and cancellation
+- Full voice conversation mode with interruption and hands-free controls
+- Natural neural Russian/English voice packs and expressive delivery
+- Anime character artwork, animation, lip-sync and emotion states
+- Camera and image understanding
+- Tool/function calling for Android actions, timers, reminders and app control
+- Search and other external tools
+- Better memory controls and conversation management
+- Optional local/offline models where device performance and model licences allow
 
-## open-source references
+## Build
 
-Compatible open-source components may be used where their licenses permit redistribution. Current research references include Supertonic 3 Android implementations, Supertonic KMP, Kokoro Android, Piper Android, HayaiTTS, Anime AI and ChatdollKit.
+GitHub Actions builds the Android debug APK on every push. Download the `RommyAi-debug` artifact from the latest successful run in the repository's Actions tab.
 
-Third-party code, models and voice packs remain separated and credited with their original licenses. A model/voice is not bundled until its redistribution terms are checked.
+## Licence
 
-## project status
-
-The Android 17 / Compose foundation is in place. Voice architecture and expressive speech are now being implemented first; wake word, command execution, app launching, timers and avatar rendering follow as independent modules.
+See [LICENSE](LICENSE). Third-party model weights, voice packs and libraries will be included only when their licences permit the intended use and redistribution.
