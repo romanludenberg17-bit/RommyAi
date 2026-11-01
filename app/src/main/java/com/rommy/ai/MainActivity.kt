@@ -187,6 +187,7 @@ private fun RommyAssistant(
     var isThinking by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var apiKeyInput by remember { mutableStateOf("") }
+    var hasApiKey by remember { mutableStateOf(apiKeyConfigured) }
     val drawerState = androidx.compose.material3.rememberDrawerState(
         if (drawerOpen) androidx.compose.material3.DrawerValue.Open else androidx.compose.material3.DrawerValue.Closed
     )
@@ -198,7 +199,7 @@ private fun RommyAssistant(
             title = { Text("подключение Gemini") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(if (apiKeyConfigured) "ключ уже сохранён на устройстве. введи новый, чтобы заменить его, или оставь поле пустым для удаления." else "добавь ключ Google AI Studio, чтобы включить настоящий ИИ-диалог.", color = Muted, fontSize = 13.sp)
+                    Text(if (hasApiKey) "ключ уже сохранён на устройстве. введи новый, чтобы заменить его, или оставь поле пустым для удаления." else "добавь ключ Google AI Studio, чтобы включить настоящий ИИ-диалог.", color = Muted, fontSize = 13.sp)
                     OutlinedTextField(
                         value = apiKeyInput,
                         onValueChange = { apiKeyInput = it },
@@ -210,7 +211,7 @@ private fun RommyAssistant(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onSaveApiKey(apiKeyInput); apiKeyInput = ""; showSettings = false }) { Text("сохранить") }
+                TextButton(onClick = { onSaveApiKey(apiKeyInput); hasApiKey = apiKeyInput.isNotBlank(); apiKeyInput = ""; showSettings = false }) { Text("сохранить") }
             },
             dismissButton = { TextButton(onClick = { showSettings = false }) { Text("отмена") } }
         )
