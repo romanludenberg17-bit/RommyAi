@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.rommy.ai.apps.AppLauncher
 import com.rommy.ai.commands.CommandRouter
+import com.rommy.ai.timers.TimerManager
 import com.rommy.ai.voice.SpeechRecognizerController
 import com.rommy.ai.voice.SpeechStyle
 import com.rommy.ai.voice.VoiceCoordinator
@@ -50,13 +51,11 @@ class MainActivity : ComponentActivity() {
     private fun startListening() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             audioPermission.launch(Manifest.permission.RECORD_AUDIO)
-        } else {
-            recognizer.start()
-        }
+        } else recognizer.start()
     }
 
     private fun handleCommand(text: String) {
-        val result = CommandRouter(AppLauncher(this)).handle(text)
+        val result = CommandRouter(AppLauncher(this), TimerManager(this)).handle(text)
         voice.speak(result.response, Locale.getDefault(), if (result.handled) SpeechStyle.CHEERFUL else SpeechStyle.CALM)
     }
 
@@ -71,7 +70,8 @@ class MainActivity : ComponentActivity() {
 private fun RommyAiRoot(voice: VoiceCoordinator, onListen: () -> Unit) {
     val context = LocalContext.current
     val launcher = remember { AppLauncher(context) }
-    val router = remember { CommandRouter(launcher) }
+    val timerManager = remember { TimerManager(context) }
+    val router = remember { CommandRouter(launcher, timerManager) }
     var query by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("готова к команде") }
 
